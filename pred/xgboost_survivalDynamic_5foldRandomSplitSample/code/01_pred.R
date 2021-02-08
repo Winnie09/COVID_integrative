@@ -6,7 +6,6 @@ d.pt <- readRDS('/Users/wenpinhou/Dropbox/covid/pred/data/data/sample_info_pb_op
 rownames(d.pt) <- d.pt$Patient
 str(d.pt)
 d.pt <- d.pt[d.pt[,'Clinical.Outcome'] %in% c('Recovered','Deceased'),]
-d.pt <- d.pt[d.pt[,'Phenotype'] %in% c('Mi', 'Mod', 'Se'),]
 
 stu <- d.pt$Study
 sel <- names(which(sapply(unique(stu),function(s) {
@@ -16,47 +15,18 @@ sel <- names(which(sapply(unique(stu),function(s) {
 d.pt <- d.pt[stu %in% sel,]
 pt <- d.pt$Pseudotime
 qt <- quantile(pt,seq(0,1,length.out=21))
-
-deceased.id = which(d.pt$Clinical.Outcome == 'Deceased')
-windowcut <- pt[deceased.id[1:length(deceased.id)%%5 == 0]]
-windowcut[length(windowcut)] <- max(pt)
-windowcut <- c(deceased.id[1]-1, windowcut)
-
-
-
-sp.split <- sapply(1:(length(windowcut)-2),function(i) {
- d.pt[pt > windowcut[i] & pt <= windowcut[i+2],'Patient']
-  
+type.splie <- sapply(1:(length(qt)-5),function(i) {
+  table(d.pt[pt > qt[i] & pt < qt[i+5],'Clinical.Outcome'])
 })
-names(sp.split) <- paste0('window', 1:length(sp.split))
-cut <- d.pt$Pseudotime[which(d.pt$Clinical.Outcome=='Deceased')[3]]
-sp.split[[1]] <- setdiff(sp.split[[1]],d.pt$Patient[d.pt$Pseudotime < cut])
-
-type.split <- sapply(1:(length(sp.split)),function(i) {
-  tab <- table(d.pt[sp.split[[i]],'Clinical.Outcome'])
-  v <- rep(0,2)
-  names(v) <- c('Deceased', 'Recovered')
-  v[names(tab)] <- tab
-  v
-})
-colnames(type.split) <- paste0('window', 1:ncol(type.split))
-write.csv(type.split, paste0(pdir, 'window_sample_size.csv'))
 
 
+pd <- do.call(cbind, type.splie)
+colnames(pd) <- paste0('window', 1:ncol(pd))
+write.csv(pd, paste0(pdir, 'window_sample_size.csv'))
 
-# type.split <- sapply(1:(length(qt)-5),function(i) {
-#   tab <- table(d.pt[pt > qt[i] & pt < qt[i+5],'Clinical.Outcome'])
-#   v <- rep(0,2)
-#   names(v) <- c('Deceased', 'Recovered')
-#   v[names(tab)] <- tab
-#   v
-# })
-# colnames(type.split) <- paste0('window', 1:ncol(type.split))
-# write.csv(type.split, paste0(pdir, 'window_sample_size.csv'))
-# 
-# sp.split <- pat <- sapply(1:(length(qt)-5),function(i) {
-#   d.pt[pt > qt[i] & pt < qt[i+5],'Patient']
-# },simplify = F)
+sp.splie <- pat <- sapply(1:(length(qt)-5),function(i) {
+  d.pt[pt > qt[i] & pt < qt[i+5],'Patient']
+},simplify = F)
 
 ## pseudobulk data
 d <- readRDS('pred/data/data/pbmcnorm_combat.rds')
@@ -116,40 +86,29 @@ getcontmat <- function(pred, true){ # rows are true, col are pred
 }
 
 
-for (window in 1:length(sp.split)){
+for (window in 11:16){
   print(window)
-  sp.select <- sp.split[[window]]
+  sp.select <- sp.splie[[window]]
   arg <- c('Recovered', 'Deceased')
   pbmc.s <- intersect(colnames(d[[1]]), sp.select)
   as <- sub('.*-', '', pbmc.s)
   table(as)
-  pbmc.patient <- sub('\\..*-', '-', d.pt[pbmc.s, 'Patient'])
-  length(unique(pbmc.patient))
   mat <- d[[1]][, pbmc.s]
   fea.base <- d.pt[pbmc.s, c('Age', 'Sex')]
   rownames(fea.base) <- pbmc.s
   colnames(fea.base) <- paste0('base:', colnames(fea.base))
   fea.base[,2] <- ifelse(fea.base[,2] == 'M', 0, 10)
-  outcome <- d.pt[pbmc.s, 'Clinical.Outcome']      
-  id1 <- which(outcome == 'Deceased')
-  id1.patient <- pbmc.patient[id1]
-  id1.patient <- id1[!duplicated(id1.patient)]
-  str(id1.patient)
-  id2 <- which(outcome == 'Recovered')
-  id2.patient <- pbmc.patient[id2]
-  id2.patient <- id2[!duplicated(id2.patient)]
-  str(id2.patient)
   get_fealist <- function(feature.type = 'gene'){
     fealist  <- list()
     for (j in 1:5) {
+       outcome <- d.pt[pbmc.s, 'Clinical.Outcome']      
+       id1 <- which(outcome == 'Deceased')
+       id2 <- which(outcome == 'Recovered')
        set.seed(j)
-       if (length(id1.patient)<4){
-         leaveid <- c(sample(pbmc.s[id1.patient], length(id1.patient)/2), sample(pbmc.s[id2.patient], length(id2.patient)/4))
-       } else {
-         leaveid <- c(sample(pbmc.s[id1.patient], length(id1.patient)/4), sample(pbmc.s[id2.patient], length(id2.patient)/4))
-       }
-       trainid <- setdiff(pbmc.s, leaveid)
-       if (length(table(d.pt[leaveid,'Clinical.Outcome'])) >= 1 & length(table(d.pt[trainid,'Clinical.Outcome'])) == 2){
+       leaveid <- c(sample(id1, length(id1)/2), sample(id2, length(id2)/2))
+       trainid <- setdiff(1:length(pbmc.s), leaveid)
+       
+       if (length(table(d.pt[pbmc.s[leaveid],'Clinical.Outcome'])) == 2 & length(table(d.pt[pbmc.s[trainid],'Clinical.Outcome'])) == 2){
        data <- lapply(1:length(d), function(cluid){
           mat <- d[[cluid]]
           if (feature.type == 'gene'){
@@ -171,7 +130,7 @@ for (window in 1:length(sp.split)){
        })
          mat <- do.call(rbind, data)
             tryCatch({
-              y <- d.pt[trainid, 'Clinical.Outcome']
+              y <- d.pt[pbmc.s[trainid], 'Clinical.Outcome']
               model <- xgboost(data = t(mat[, trainid, drop=FALSE]), label = trans(y), nrounds = 20,objective='binary:logistic', verbose = F)  ###### nrounds to be 20 !!! numclu = 2
               impt <- data.frame(xgb.importance(feature_names = rownames(mat), model = model))
               saveRDS(impt, paste0(rdir, 'impt_window', window, '_', feature.type, '_seed', j, '.rds'))
@@ -190,14 +149,16 @@ for (window in 1:length(sp.split)){
   getauc <- function(base = TRUE,  cytokine = FALSE, receptor = FALSE, tf = FALSE, cellProp = FALSE, gene = FALSE){
     print(c(base, cytokine, receptor, tf, cellProp, gene))
     auclist <- list()
-    for (j in 1:5) {
-      set.seed(j)
-      if (length(id1.patient)<4){
-         leaveid <- c(sample(pbmc.s[id1.patient], length(id1.patient)/2), sample(pbmc.s[id2.patient], length(id2.patient)/4))
-       } else {
-         leaveid <- c(sample(pbmc.s[id1.patient], length(id1.patient)/4), sample(pbmc.s[id2.patient], length(id2.patient)/4))
-       }
-      trainid <- setdiff(pbmc.s, leaveid)
+    for (j in 1:length(allfealist)) {
+      # leaveid <- pbmc.s[which(as == names(allfealist)[j]) ]
+      # trainid <- setdiff(pbmc.s, leaveid)
+       outcome <- d.pt[pbmc.s, 'Clinical.Outcome']      
+       id1 <- which(outcome == 'Deceased')
+       id2 <- which(outcome == 'Recovered')
+       set.seed(j)
+       leaveid <- c(sample(pbmc.s[id1], length(id1)/4), sample(pbmc.s[id2], length(id2)/4))
+       trainid <- setdiff(pbmc.s, leaveid)
+       
       y <- d.pt[trainid, 'Clinical.Outcome']
       fea.type <- NULL
       if (base == TRUE)  fea.type <- c(fea.type, 'base')
@@ -209,6 +170,7 @@ for (window in 1:length(sp.split)){
         fea.type <- c(fea.type, 'gene')
         fea.type <- setdiff(fea.type, c('cytokine', 'receptor','tf'))
       } 
+      
       mat <- allfealist[[j]]
       g <- sub('.*;', '', rownames(mat))
       type <- sub(':.*', '', rownames(mat))
@@ -220,7 +182,9 @@ for (window in 1:length(sp.split)){
       # predy <- revtrans(id)
       truey <- d.pt[leaveid, 'Clinical.Outcome']
       library(pROC)
+      # auclist[[j]] <- auc(roc(trans(truey), pred[2,]))
       auclist[[j]] <- auc(roc(trans(truey), pred))
+      #auc(multiclass.roc(trans(truey), trans(predy), levels = as.vector(trans(c('Deceased','Recovered')))))
     }
     names(auclist) <- names(allfealist)
     return(unlist(auclist))
@@ -245,7 +209,7 @@ for (window in 1:length(sp.split)){
   
   # -----------------------------
   ## combine selected features of base, gene, cytokine, receptor, tf, cellprop
-  allfealist <- lapply(which(sapply(fealist.gene, length) > 0), function(i){
+  allfealist <- sapply(which(sapply(fealist.gene, length) > 0), function(i){
     m1 <- fealist.gene[[i]]
     rownames(m1) <- paste0('gene:', rownames(m1))
     m2 <- fealist.cyt[[i]]

@@ -19,6 +19,7 @@ pdf(paste0(pdir, 'AUC_feature_by_window.pdf'), width = 6, height = 5)
 pheatmap(auc, cluster_cols = FALSE)
 dev.off()
 
+
 pdf(paste0(pdir, 'AUC_feature_by_window_rank.pdf'), width = 6, height = 5)
 pheatmap(apply(auc, 2, rank), cluster_cols = FALSE)
 dev.off()
